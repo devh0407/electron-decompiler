@@ -1,6 +1,7 @@
 const { parentPort, workerData } = require('node:worker_threads');
 const fs = require('node:fs');
 const path = require('node:path');
+const { buildExtractionPlan } = require('./extraction-plan.cjs');
 
 async function main() {
   const asar = await import('@electron/asar');
@@ -9,73 +10,80 @@ async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
 
   const entries = asar.listPackage(archivePath, { isPack: false });
-  const records = [];
-  let totalBytes = 0;
-  let totalFiles = 0;
-  let unpackedFiles = 0;
+  const plan = buildExtractionPlan(asar, archivePath, entries);
+  const warnings = [...plan.warnings];
 
-  for (const fullPath of entries) {
-    const relativePath = String(fullPath).replace(/^[/\\]+/, '');
-    if (!relativePath) continue;
-    let stat;
-    try { stat = asar.statFile(archivePath, relativePath, false); } catch { continue; }
-    const isDirectory = Boolean(stat && stat.files);
-    const isLink = Boolean(stat && stat.link);
-    const size = !isDirectory && !isLink && Number.isFinite(stat.size) ? stat.size : 0;
-    if (!isDirectory && !isLink) {
-      totalFiles += 1;
-      totalBytes += size;
-      if (stat.unpacked) unpackedFiles += 1;
-    }
-    records.push({ relativePath, isDirectory, isLink, size, executable: Boolean(stat.executable), unpacked: Boolean(stat.unpacked) });
-  }
-
-  parentPort.postMessage({ type: 'scan', totalEntries: records.length, totalFiles, totalBytes, unpackedFiles });
+  parentPort.postMessage({
+    type: 'scan',
+    totalEntries: plan.totalEntries,
+    totalFiles: plan.totalFiles,
+    totalBytes: plan.totalBytes,
+    unpackedFiles: plan.unpackedFiles,
+    linkRoots: plan.linkRoots,
+    virtualFiles: plan.virtualFiles
+  });
 
   let filesDone = 0;
   let entriesDone = 0;
   let bytesDone = 0;
-  const warnings = [];
+  const outputRoot = path.resolve(outputDir);
 
-  for (const record of records) {
-    const destination = path.resolve(outputDir, record.relativePath);
-    const relGuard = path.relative(path.resolve(outputDir), destination);
+  for (const task of plan.tasks) {
+    const destination = path.resolve(outputRoot, task.relativePath);
+    const relGuard = path.relative(outputRoot, destination);
     if (relGuard.startsWith('..') || path.isAbsolute(relGuard)) {
-      warnings.push({ code: 'PATH_ESCAPE', path: record.relativePath, message: 'Skipped path escaping extraction root.' });
+      warnings.push({ code: 'PATH_ESCAPE', path: task.relativePath, message: 'Skipped path escaping extraction root.' });
+      entriesDone += 1;
       continue;
     }
 
     try {
-      if (record.isDirectory) {
+      if (task.virtualOnly) {
+        // Some valid ASAR names cannot be represented by the Windows filesystem
+        // (for example CON.txt or names ending with a dot). Keep them virtual;
+        // the preview protocol can read the original path directly from ASAR.
+        if (task.type === 'file') {
+          filesDone += 1;
+          bytesDone += task.size;
+        }
+      } else if (task.type === 'directory') {
         fs.mkdirSync(destination, { recursive: true });
-      } else if (record.isLink) {
-        warnings.push({ code: 'SYMLINK_SKIPPED', path: record.relativePath, message: 'Symlink skipped in safe extraction mode.' });
       } else {
         fs.mkdirSync(path.dirname(destination), { recursive: true });
-        const content = asar.extractFile(archivePath, record.relativePath);
+        const content = asar.extractFile(archivePath, task.sourcePath, true);
         fs.writeFileSync(destination, content);
-        if (record.executable && process.platform !== 'win32') fs.chmodSync(destination, 0o755);
+        if (task.executable && process.platform !== 'win32') fs.chmodSync(destination, 0o755);
         filesDone += 1;
-        bytesDone += record.size;
+        bytesDone += task.size;
       }
     } catch (error) {
-      warnings.push({ code: record.unpacked ? 'UNPACKED_FILE_MISSING' : 'EXTRACT_FAILED', path: record.relativePath, message: error?.message || String(error) });
+      const code = task.unpacked
+        ? 'UNPACKED_FILE_MISSING'
+        : task.materializedLink
+          ? 'LINK_MATERIALIZE_FAILED'
+          : 'EXTRACT_FAILED';
+      warnings.push({ code, path: task.relativePath, message: error?.message || String(error) });
     }
 
     entriesDone += 1;
     parentPort.postMessage({
       type: 'extract',
-      currentFile: record.relativePath,
+      currentFile: task.relativePath,
       entriesDone,
-      totalEntries: records.length,
+      totalEntries: plan.totalEntries,
       filesDone,
-      totalFiles,
+      totalFiles: plan.totalFiles,
       bytesDone,
-      totalBytes
+      totalBytes: plan.totalBytes
     });
   }
 
-  parentPort.postMessage({ type: 'done', warnings });
+  parentPort.postMessage({
+    type: 'done',
+    warnings,
+    linkRoots: plan.linkRoots,
+    virtualFiles: plan.virtualFiles
+  });
 }
 
 main().catch((error) => {
