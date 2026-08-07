@@ -37,6 +37,10 @@ A safe Electron `app.asar` inspector and renderer compatibility previewer.
 - Automatically re-analyze cached v0.2 workspaces when the analysis schema changes.
 - Read the imported ASAR container with Electron's unpatched `original-fs` semantics, so the archive is treated as a real file for validation and SHA-256 hashing.
 - Track the presence and metadata fingerprint of `app.asar.unpacked`; changing/restoring the companion directory invalidates stale extraction caches.
+- Safely materialize ASAR file and directory links as ordinary extracted files/directories instead of creating real filesystem symlinks.
+- Reject circular or archive-escaping link targets.
+- Keep ASAR entries that Windows cannot represent on disk (for example `CON.txt`, illegal filename characters, trailing dot/space) as virtual files and serve them directly from the original archive through the preview protocol.
+- Version the extraction format so workspaces created before link materialization are automatically re-extracted.
 
 ## Runtime mock format
 
@@ -71,6 +75,8 @@ The original renderer JavaScript still executes inside that sandbox. The compati
 
 The target archive itself is a special case: Electron patches normal `node:fs` calls so `.asar` paths behave like virtual directories. Electron Decompiler therefore uses a small `archive-fs` boundary that selects `original-fs` inside Electron for operations on the ASAR container and its `.unpacked` companion. Files already extracted into the workspace continue to use normal `node:fs`.
 
+ASAR links are also handled without weakening the boundary: the extractor follows only in-archive link targets and writes ordinary files/directories into the workspace. It never creates an operating-system symlink. Entries that are valid inside ASAR but cannot be represented safely on Windows remain virtual and are read on demand from the archive.
+
 ## Requirements
 
 - Node.js 22.12+
@@ -90,7 +96,7 @@ npm test
 npm run check
 ```
 
-Analyzer and Runtime Shim tests are dependency-free and do not require an Electron GUI.
+Analyzer, extraction-plan, cache and Runtime Shim tests are dependency-free and do not require an Electron GUI.
 
 ## How it works
 
@@ -98,6 +104,11 @@ Analyzer and Runtime Shim tests are dependency-free and do not require an Electr
 app.asar
    |
    +--> archive-fs (real file semantics for stat/hash)
+   |
+   +--> extraction plan
+   |      |- regular files/directories
+   |      |- safe link materialization
+   |      `- Windows-unrepresentable entries -> virtual-only
    |
    +--> ASAR worker --> workspace/source
    |        `--> @electron/asar reads app.asar.unpacked when required
@@ -111,8 +122,9 @@ app.asar
    |
    `--> asar-preview://<projectId>/page.html
              |
+             +--> physical workspace file when available
+             +--> original ASAR fallback for virtual-only/missing extracted paths
              +--> host injects Runtime Shim first
-             +--> target renderer scripts execute
              `--> Missing API / IPC -> Console -> optional Mock -> Reload
 ```
 
@@ -124,8 +136,9 @@ Workspace data is stored under Electron's `userData/workspaces/<sha256-prefix>` 
 - Bundled/minified preload code that constructs bridge objects dynamically may not be fully resolved.
 - Event-style APIs backed by `ipcRenderer.on` are identified, but v0.3 does not yet simulate event delivery.
 - Native modules are not executed in safe mode.
-- ASAR link/symlink entries are currently skipped during safe extraction and reported as `SYMLINK_SKIPPED`; an application that depends on such a link may have missing extracted resources.
 - The `.asar.unpacked` cache fingerprint uses path/size/mtime metadata rather than hashing every unpacked file's contents, trading perfect detection for import speed.
+- Import reads the source application in place; replacing/updating that application concurrently with an import can still produce an inconsistent snapshot.
+- Virtual-only ASAR fallback currently returns complete files and does not implement HTTP byte-range responses for rare media assets that require range loading.
 - Remote `loadURL(http/https)` entries are detected but not auto-loaded.
 - Full main-process behavior is deferred to the Virtual Main runtime.
 
