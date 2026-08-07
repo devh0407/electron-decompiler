@@ -150,4 +150,4 @@ Workspace data is stored under Electron's `userData/workspaces/<sha256-prefix>` 
 - **v0.4** — virtual main runtime, fake `app`/`BrowserWindow`/`ipcMain`, dynamic window discovery.
 - **v0.5** — multi-window tabs, network inspector, storage tools and snapshots.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and the v0.3 runtime flow.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and the v0.3.1 runtime/extraction flow.
