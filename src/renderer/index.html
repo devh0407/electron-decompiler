@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+  <title>Electron Decompiler</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>Electron Decompiler</strong>
+      <span class="version">v0.3.1</span>
+      <span class="mode-pill">Safe Render + Runtime Shim</span>
+    </div>
+    <div class="toolbar">
+      <button id="open-button" class="primary">打开 app.asar</button>
+      <button id="reload-button" disabled>Reload Preview</button>
+      <button id="devtools-button" disabled>DevTools</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar">
+      <section id="drop-zone" class="drop-zone">
+        <div class="drop-title">拖入 app.asar</div>
+        <div class="drop-subtitle">或点击顶部“打开 app.asar”</div>
+      </section>
+
+      <section class="panel project-panel">
+        <div class="panel-title">Project</div>
+        <div id="project-summary" class="empty">尚未导入项目</div>
+      </section>
+
+      <section class="panel tree-panel">
+        <div class="panel-title">Files</div>
+        <div id="file-tree" class="file-tree empty">等待解包…</div>
+      </section>
+    </aside>
+
+    <section class="center">
+      <div class="preview-header">
+        <div>
+          <div class="panel-title">Preview</div>
+          <div id="preview-path" class="muted">未选择页面</div>
+        </div>
+        <div id="status-badge" class="badge">IDLE</div>
+      </div>
+
+      <div id="progress-card" class="progress-card hidden">
+        <div class="progress-row">
+          <span id="progress-label">准备中</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <div id="progress-detail" class="progress-detail"></div>
+      </div>
+
+      <div id="preview-host" class="preview-host">
+        <div id="preview-placeholder" class="preview-placeholder">
+          导入 ASAR 后将自动识别 Renderer 页面。<br />v0.3.1 会根据 preload 分析结果注入兼容 Runtime。
+        </div>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <section class="panel">
+        <div class="panel-title">Detected Renderer</div>
+        <div id="renderer-entries" class="empty">尚未分析</div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">Preload / Bridges</div>
+        <div id="preload-list" class="empty">尚未分析</div>
+        <div id="bridge-list" class="sub-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">Renderer APIs</div>
+        <div id="api-list" class="empty">尚未分析</div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">IPC Registry</div>
+        <div id="ipc-list" class="empty">尚未分析</div>
+      </section>
+      <section class="panel mock-panel">
+        <div class="panel-title-row">
+          <div class="panel-title">Runtime Mocks</div>
+          <span id="mock-status" class="muted"></span>
+        </div>
+        <div class="mock-help">API 使用 <code>{"return": ...}</code>，属性使用 <code>{"value": ...}</code>；IPC mock 按 channel 配置。</div>
+        <textarea id="mock-editor" spellcheck="false" disabled></textarea>
+        <div class="mock-actions">
+          <button id="reset-mocks" disabled>Reset editor</button>
+          <button id="save-mocks" class="primary" disabled>Save & Reload</button>
+        </div>
+      </section>
+      <section class="panel warnings-panel">
+        <div class="panel-title">Warnings</div>
+        <div id="warning-list" class="empty">暂无</div>
+      </section>
+    </aside>
+  </main>
+
+  <section class="console-panel">
+    <div class="console-header">
+      <div class="panel-title">Console</div>
+      <div class="console-actions">
+        <span class="legend"><b>runtime</b> = Missing API / IPC / Mock</span>
+        <button id="clear-console">Clear</button>
+      </div>
+    </div>
+    <div id="console-output" class="console-output"><div class="console-empty">Preview console output will appear here.</div></div>
+  </section>
+
+  <script src="./app.js"></script>
+</body>
+</html>
