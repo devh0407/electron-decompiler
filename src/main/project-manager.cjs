@@ -9,6 +9,7 @@ const { MockRegistry } = require('./mock-registry.cjs');
 const { normalizeRelative, resolveInside } = require('./path-utils.cjs');
 
 const archiveFsp = archiveFs.promises;
+const EXTRACTION_SCHEMA_VERSION = 2;
 
 class ProjectManager {
   constructor({ workspaceRoot, onProgress }) {
@@ -145,7 +146,8 @@ class ProjectManager {
       mocks,
       importedAt: new Date().toISOString(),
       unpackedSiblingPresent: unpackedState.present,
-      unpackedFingerprint: unpackedState.fingerprint
+      unpackedFingerprint: unpackedState.fingerprint,
+      extractionSchemaVersion: EXTRACTION_SCHEMA_VERSION
     };
 
     await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -155,7 +157,8 @@ class ProjectManager {
       archivePath: resolvedArchive,
       importedAt: project.importedAt,
       unpackedSiblingPresent: unpackedState.present,
-      unpackedFingerprint: unpackedState.fingerprint
+      unpackedFingerprint: unpackedState.fingerprint,
+      extractionSchemaVersion: EXTRACTION_SCHEMA_VERSION
     }, null, 2));
 
     this.projects.set(projectId, project);
@@ -168,6 +171,7 @@ class ProjectManager {
       if (!fs.existsSync(ctx.metaPath) || !fs.existsSync(ctx.manifestPath) || !fs.existsSync(ctx.sourceDir)) return null;
       const meta = JSON.parse(await fsp.readFile(ctx.metaPath, 'utf8'));
       if (meta.hash !== ctx.hash) return null;
+      if (meta.extractionSchemaVersion !== EXTRACTION_SCHEMA_VERSION) return null;
       if (Boolean(meta.unpackedSiblingPresent) !== ctx.unpackedState.present) return null;
       if ((meta.unpackedFingerprint || null) !== ctx.unpackedState.fingerprint) return null;
 
@@ -188,7 +192,8 @@ class ProjectManager {
         mocks,
         importedAt: meta.importedAt,
         unpackedSiblingPresent: ctx.unpackedState.present,
-        unpackedFingerprint: ctx.unpackedState.fingerprint
+        unpackedFingerprint: ctx.unpackedState.fingerprint,
+        extractionSchemaVersion: EXTRACTION_SCHEMA_VERSION
       };
       this.projects.set(ctx.projectId, project);
       return this.publicProject(project);
@@ -209,7 +214,11 @@ class ProjectManager {
       worker.on('message', (message) => {
         if (message.type === 'scan') this.emit(projectId, 'SCANNING', message);
         else if (message.type === 'extract') this.emit(projectId, 'EXTRACTING', message);
-        else if (message.type === 'done') finish(resolve, { warnings: message.warnings || [] });
+        else if (message.type === 'done') finish(resolve, {
+          warnings: message.warnings || [],
+          linkRoots: message.linkRoots || 0,
+          virtualFiles: message.virtualFiles || 0
+        });
         else if (message.type === 'error') finish(reject, new Error(message.message));
       });
       worker.on('error', (error) => finish(reject, error));
@@ -230,6 +239,7 @@ class ProjectManager {
       archivePath: project.archivePath,
       importedAt: project.importedAt,
       unpackedSiblingPresent: project.unpackedSiblingPresent,
+      extractionSchemaVersion: project.extractionSchemaVersion,
       manifest: project.manifest,
       mocks: project.mocks
     };
@@ -264,4 +274,4 @@ class ProjectManager {
   }
 }
 
-module.exports = { ProjectManager };
+module.exports = { EXTRACTION_SCHEMA_VERSION, ProjectManager };
