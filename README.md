@@ -2,7 +2,7 @@
 
 A safe Electron `app.asar` inspector and renderer compatibility previewer.
 
-> Current milestone: **v0.3** — preload/contextBridge analysis + IPC registry + injected compatibility runtime + editable mocks.
+> Current milestone: **v0.3.1** — v0.3 compatibility runtime plus hardened ASAR extraction/link handling.
 
 ## Features
 
@@ -35,6 +35,9 @@ A safe Electron `app.asar` inspector and renderer compatibility previewer.
 - Mock by exposed API path or IPC channel and reload the preview after saving.
 - Double-click a Missing API/IPC console line to add a mock stub to the editor.
 - Automatically re-analyze cached v0.2 workspaces when the analysis schema changes.
+
+### v0.3.1 ASAR hardening
+
 - Read the imported ASAR container with Electron's unpatched `original-fs` semantics, so the archive is treated as a real file for validation and SHA-256 hashing.
 - Track the presence and metadata fingerprint of `app.asar.unpacked`; changing/restoring the companion directory invalidates stale extraction caches.
 - Safely materialize ASAR file and directory links as ordinary extracted files/directories instead of creating real filesystem symlinks.
@@ -63,7 +66,7 @@ For an API mapped to `ipcRenderer.invoke`, the runtime returns a resolved Promis
 
 Imported ASAR files should be treated as untrusted.
 
-v0.3 still **does not execute the target application's main process or original preload script**. Preview pages run in a dedicated `WebContentsView` with:
+v0.3.1 still **does not execute the target application's main process or original preload script**. Preview pages run in a dedicated `WebContentsView` with:
 
 ```text
 sandbox: true
