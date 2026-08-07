@@ -53,9 +53,8 @@ function registerProtocol() {
   protocol.handle('asar-preview', async (request) => {
     try {
       const url = new URL(request.url);
-      if (url.hostname !== 'project') return new Response('Not found', { status: 404 });
+      const projectId = decodeURIComponent(url.hostname);
       const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
-      const projectId = parts.shift();
       const project = projectManager.getProject(projectId);
       if (!project) return new Response('Unknown project', { status: 404 });
       const filePath = resolveInside(project.sourceDir, parts.join('/'));
