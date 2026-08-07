@@ -1,8 +1,8 @@
 {
   "name": "electron-decompiler",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Inspect, extract, analyze and safely preview Electron app.asar renderer pages.",
+  "description": "Inspect, extract, analyze and safely preview Electron app.asar renderer pages with compatibility mocks.",
   "main": "src/main/main.cjs",
   "scripts": {
     "start": "electron .",

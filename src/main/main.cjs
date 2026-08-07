@@ -1,9 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain, net, protocol } = require('electron');
+const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ProjectManager } = require('./project-manager.cjs');
 const { PreviewManager } = require('./preview-manager.cjs');
+const { buildRuntimeShim } = require('./runtime-shim.cjs');
 const { resolveInside } = require('./path-utils.cjs');
+
+const RUNTIME_PATH = '__electron_decompiler_runtime__.js';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -25,12 +29,19 @@ function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
+function injectRuntimeScript(html) {
+  const tag = `<script src="/${RUNTIME_PATH}"></script>`;
+  const head = /<head(?:\s[^>]*)?>/i;
+  if (head.test(html)) return html.replace(head, (match) => `${match}\n  ${tag}`);
+  return `${tag}\n${html}`;
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1500,
-    height: 940,
-    minWidth: 1100,
-    minHeight: 700,
+    width: 1540,
+    height: 960,
+    minWidth: 1180,
+    minHeight: 720,
     title: 'Electron Decompiler',
     webPreferences: {
       preload: path.join(__dirname, '../preload/host-preload.cjs'),
@@ -57,7 +68,29 @@ function registerProtocol() {
       const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
       const project = projectManager.getProject(projectId);
       if (!project) return new Response('Unknown project', { status: 404 });
-      const filePath = resolveInside(project.sourceDir, parts.join('/'));
+
+      if (parts.length === 1 && parts[0] === RUNTIME_PATH) {
+        return new Response(buildRuntimeShim(project.manifest, project.mocks), {
+          status: 200,
+          headers: {
+            'content-type': 'text/javascript; charset=utf-8',
+            'cache-control': 'no-store'
+          }
+        });
+      }
+
+      const relativePath = parts.join('/');
+      const filePath = resolveInside(project.sourceDir, relativePath);
+      if (/\.html?$/i.test(relativePath)) {
+        const html = await fsp.readFile(filePath, 'utf8');
+        return new Response(injectRuntimeScript(html), {
+          status: 200,
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store'
+          }
+        });
+      }
       return net.fetch(pathToFileURL(filePath).toString());
     } catch (error) {
       return new Response(error?.message || 'Preview protocol error', { status: 500 });
@@ -77,6 +110,8 @@ function registerIpc() {
 
   ipcMain.handle('project:import', async (_event, archivePath) => projectManager.importAsar(archivePath));
   ipcMain.handle('project:list-directory', async (_event, args) => projectManager.listDirectory(args.projectId, args.path || ''));
+  ipcMain.handle('project:get-mocks', async (_event, projectId) => projectManager.getMocks(projectId));
+  ipcMain.handle('project:save-mocks', async (_event, args) => projectManager.saveMocks(args.projectId, args.mocks));
 
   ipcMain.handle('preview:load', async (_event, args) => previewManager.load(args.projectId, args.path));
   ipcMain.on('preview:set-bounds', (_event, bounds) => previewManager.setBounds(bounds));
@@ -102,3 +137,5 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+module.exports = { injectRuntimeScript };

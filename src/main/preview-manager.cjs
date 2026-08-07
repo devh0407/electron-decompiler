@@ -1,5 +1,21 @@
 const { WebContentsView } = require('electron');
 
+const RUNTIME_PREFIX = '[EDC_RUNTIME]';
+
+function formatRuntimeEvent(payload) {
+  switch (payload.type) {
+    case 'missing-api': return `Missing API: ${payload.path}(${Array.isArray(payload.args) ? payload.args.map((arg) => JSON.stringify(arg)).join(', ') : ''})`;
+    case 'missing-value': return `Missing value: ${payload.path}`;
+    case 'missing-ipc': return `Missing IPC: ${payload.channel} via ${payload.path} [${payload.method}]`;
+    case 'mock-hit': return `Mock hit: ${payload.path}${payload.channel ? ` → ${payload.channel}` : ''}`;
+    case 'bridge-installed': return `Runtime bridge installed: window.${payload.root}`;
+    case 'bridge-conflict': return `Runtime bridge skipped because window.${payload.root} already exists`;
+    case 'renderer-error': return `Renderer error: ${payload.message}`;
+    case 'renderer-rejection': return `Unhandled rejection: ${payload.message}`;
+    default: return `${payload.type || 'runtime'}: ${payload.message || payload.path || ''}`;
+  }
+}
+
 class PreviewManager {
   constructor({ mainWindow, onConsole }) {
     this.mainWindow = mainWindow;
@@ -26,6 +42,21 @@ class PreviewManager {
 
   attachDiagnostics(webContents) {
     webContents.on('console-message', (details) => {
+      if (typeof details.message === 'string' && details.message.startsWith(RUNTIME_PREFIX)) {
+        try {
+          const payload = JSON.parse(details.message.slice(RUNTIME_PREFIX.length));
+          this.onConsole({
+            source: payload.type === 'missing-ipc' ? 'ipc' : 'runtime',
+            level: details.level,
+            message: formatRuntimeEvent(payload),
+            runtimeEvent: payload,
+            line: details.lineNumber,
+            sourceId: details.sourceId,
+            timestamp: payload.timestamp || Date.now()
+          });
+          return;
+        } catch {}
+      }
       this.onConsole({
         source: 'renderer',
         level: details.level,
@@ -67,13 +98,12 @@ class PreviewManager {
 
   setBounds(bounds) {
     const view = this.ensureView();
-    const safe = {
+    view.setBounds({
       x: Math.max(0, Math.round(bounds.x || 0)),
       y: Math.max(0, Math.round(bounds.y || 0)),
       width: Math.max(0, Math.round(bounds.width || 0)),
       height: Math.max(0, Math.round(bounds.height || 0))
-    };
-    view.setBounds(safe);
+    });
   }
 
   async load(projectId, relativePath) {
@@ -99,4 +129,4 @@ class PreviewManager {
   }
 }
 
-module.exports = { PreviewManager };
+module.exports = { PreviewManager, formatRuntimeEvent };

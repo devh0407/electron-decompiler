@@ -11,7 +11,8 @@
   <header class="topbar">
     <div>
       <strong>Electron Decompiler</strong>
-      <span class="version">v0.2</span>
+      <span class="version">v0.3</span>
+      <span class="mode-pill">Safe Render + Runtime Shim</span>
     </div>
     <div class="toolbar">
       <button id="open-button" class="primary">打开 app.asar</button>
@@ -58,7 +59,7 @@
 
       <div id="preview-host" class="preview-host">
         <div id="preview-placeholder" class="preview-placeholder">
-          导入 ASAR 后将自动识别 Renderer 页面。<br />也可以从左侧文件树手动打开 HTML。
+          导入 ASAR 后将自动识别 Renderer 页面。<br />v0.3 会根据 preload 分析结果注入兼容 Runtime。
         </div>
       </div>
     </section>
@@ -69,8 +70,29 @@
         <div id="renderer-entries" class="empty">尚未分析</div>
       </section>
       <section class="panel">
-        <div class="panel-title">Preload</div>
+        <div class="panel-title">Preload / Bridges</div>
         <div id="preload-list" class="empty">尚未分析</div>
+        <div id="bridge-list" class="sub-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">Renderer APIs</div>
+        <div id="api-list" class="empty">尚未分析</div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">IPC Registry</div>
+        <div id="ipc-list" class="empty">尚未分析</div>
+      </section>
+      <section class="panel mock-panel">
+        <div class="panel-title-row">
+          <div class="panel-title">Runtime Mocks</div>
+          <span id="mock-status" class="muted"></span>
+        </div>
+        <div class="mock-help">API 使用 <code>{"return": ...}</code>，属性使用 <code>{"value": ...}</code>；IPC mock 按 channel 配置。</div>
+        <textarea id="mock-editor" spellcheck="false" disabled></textarea>
+        <div class="mock-actions">
+          <button id="reset-mocks" disabled>Reset editor</button>
+          <button id="save-mocks" class="primary" disabled>Save & Reload</button>
+        </div>
       </section>
       <section class="panel warnings-panel">
         <div class="panel-title">Warnings</div>
@@ -82,7 +104,10 @@
   <section class="console-panel">
     <div class="console-header">
       <div class="panel-title">Console</div>
-      <button id="clear-console">Clear</button>
+      <div class="console-actions">
+        <span class="legend"><b>runtime</b> = Missing API / IPC / Mock</span>
+        <button id="clear-console">Clear</button>
+      </div>
     </div>
     <div id="console-output" class="console-output"><div class="console-empty">Preview console output will appear here.</div></div>
   </section>

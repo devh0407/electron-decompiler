@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { analyzeProject } = require('./analyzer.cjs');
+const { ANALYSIS_SCHEMA_VERSION, analyzeProject } = require('./analyzer.cjs');
+const { MockRegistry } = require('./mock-registry.cjs');
 const { normalizeRelative, resolveInside } = require('./path-utils.cjs');
 
 class ProjectManager {
@@ -11,6 +12,7 @@ class ProjectManager {
     this.workspaceRoot = workspaceRoot;
     this.onProgress = onProgress || (() => {});
     this.projects = new Map();
+    this.mockRegistry = new MockRegistry();
     fs.mkdirSync(workspaceRoot, { recursive: true });
   }
 
@@ -61,6 +63,7 @@ class ProjectManager {
     this.emit(projectId, 'ANALYZING');
     const manifest = analyzeProject(sourceDir);
     manifest.warnings.push(...extraction.warnings);
+    const mocks = await this.mockRegistry.load(projectRoot);
     const project = {
       projectId,
       hash,
@@ -68,6 +71,7 @@ class ProjectManager {
       projectRoot,
       sourceDir,
       manifest,
+      mocks,
       importedAt: new Date().toISOString(),
       unpackedSiblingPresent: fs.existsSync(`${resolvedArchive}.unpacked`)
     };
@@ -90,7 +94,13 @@ class ProjectManager {
       if (!fs.existsSync(ctx.metaPath) || !fs.existsSync(ctx.manifestPath) || !fs.existsSync(ctx.sourceDir)) return null;
       const meta = JSON.parse(await fsp.readFile(ctx.metaPath, 'utf8'));
       if (meta.hash !== ctx.hash) return null;
-      const manifest = JSON.parse(await fsp.readFile(ctx.manifestPath, 'utf8'));
+      let manifest = JSON.parse(await fsp.readFile(ctx.manifestPath, 'utf8'));
+      if (manifest.schemaVersion !== ANALYSIS_SCHEMA_VERSION) {
+        this.emit(ctx.projectId, 'ANALYZING', { reason: 'schema-upgrade' });
+        manifest = analyzeProject(ctx.sourceDir);
+        await fsp.writeFile(ctx.manifestPath, JSON.stringify(manifest, null, 2));
+      }
+      const mocks = await this.mockRegistry.load(ctx.projectRoot);
       const project = {
         projectId: ctx.projectId,
         hash: ctx.hash,
@@ -98,6 +108,7 @@ class ProjectManager {
         projectRoot: ctx.projectRoot,
         sourceDir: ctx.sourceDir,
         manifest,
+        mocks,
         importedAt: meta.importedAt,
         unpackedSiblingPresent: fs.existsSync(`${ctx.archivePath}.unpacked`)
       };
@@ -111,15 +122,21 @@ class ProjectManager {
   extractInWorker(archivePath, outputDir, projectId) {
     return new Promise((resolve, reject) => {
       const worker = new Worker(path.join(__dirname, 'asar-extractor-worker.cjs'), { workerData: { archivePath, outputDir } });
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        fn(value);
+      };
       worker.on('message', (message) => {
         if (message.type === 'scan') this.emit(projectId, 'SCANNING', message);
         else if (message.type === 'extract') this.emit(projectId, 'EXTRACTING', message);
-        else if (message.type === 'done') resolve({ warnings: message.warnings || [] });
-        else if (message.type === 'error') reject(new Error(message.message));
+        else if (message.type === 'done') finish(resolve, { warnings: message.warnings || [] });
+        else if (message.type === 'error') finish(reject, new Error(message.message));
       });
-      worker.on('error', reject);
+      worker.on('error', (error) => finish(reject, error));
       worker.on('exit', (code) => {
-        if (code !== 0) reject(new Error(`ASAR extraction worker exited with code ${code}`));
+        if (code !== 0) finish(reject, new Error(`ASAR extraction worker exited with code ${code}`));
       });
     });
   }
@@ -135,8 +152,22 @@ class ProjectManager {
       archivePath: project.archivePath,
       importedAt: project.importedAt,
       unpackedSiblingPresent: project.unpackedSiblingPresent,
-      manifest: project.manifest
+      manifest: project.manifest,
+      mocks: project.mocks
     };
+  }
+
+  getMocks(projectId) {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error(`Unknown project: ${projectId}`);
+    return project.mocks;
+  }
+
+  async saveMocks(projectId, input) {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error(`Unknown project: ${projectId}`);
+    project.mocks = await this.mockRegistry.save(project.projectRoot, input);
+    return project.mocks;
   }
 
   async listDirectory(projectId, relativePath = '') {

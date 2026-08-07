@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('electronDecompiler', {
   chooseAsar: () => ipcRenderer.invoke('asar:choose'),
   importAsar: (filePath) => ipcRenderer.invoke('project:import', filePath),
   listDirectory: (projectId, path = '') => ipcRenderer.invoke('project:list-directory', { projectId, path }),
+  getMocks: (projectId) => ipcRenderer.invoke('project:get-mocks', projectId),
+  saveMocks: (projectId, mocks) => ipcRenderer.invoke('project:save-mocks', { projectId, mocks }),
   loadPreview: (projectId, path) => ipcRenderer.invoke('preview:load', { projectId, path }),
   setPreviewBounds: (bounds) => ipcRenderer.send('preview:set-bounds', bounds),
   hidePreview: () => ipcRenderer.send('preview:hide'),
