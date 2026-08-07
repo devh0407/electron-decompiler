@@ -4,8 +4,11 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { ANALYSIS_SCHEMA_VERSION, analyzeProject } = require('./analyzer.cjs');
+const { archiveFs } = require('./archive-fs.cjs');
 const { MockRegistry } = require('./mock-registry.cjs');
 const { normalizeRelative, resolveInside } = require('./path-utils.cjs');
+
+const archiveFsp = archiveFs.promises;
 
 class ProjectManager {
   constructor({ workspaceRoot, onProgress }) {
@@ -19,7 +22,7 @@ class ProjectManager {
   async hashFile(filePath) {
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
-      const stream = fs.createReadStream(filePath);
+      const stream = archiveFs.createReadStream(filePath);
       stream.on('data', (chunk) => hash.update(chunk));
       stream.on('error', reject);
       stream.on('end', () => resolve(hash.digest('hex')));
@@ -30,12 +33,33 @@ class ProjectManager {
     this.onProgress({ projectId, phase, ...payload });
   }
 
+  hasUnpackedSibling(archivePath) {
+    try {
+      return archiveFs.statSync(`${archivePath}.unpacked`).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
   async importAsar(archivePath) {
+    if (typeof archivePath !== 'string' || !archivePath.trim()) {
+      throw new Error('No ASAR file path was provided.');
+    }
+
     const resolvedArchive = path.resolve(archivePath);
-    const stat = await fsp.stat(resolvedArchive);
-    if (!stat.isFile()) throw new Error('Selected path is not a file.');
+    let stat;
+    try {
+      stat = await archiveFsp.stat(resolvedArchive);
+    } catch (error) {
+      const detail = error?.code || error?.message || String(error);
+      throw new Error(`Unable to access selected ASAR file: ${resolvedArchive} (${detail})`);
+    }
+
+    if (!stat.isFile()) {
+      throw new Error(`Selected ASAR path is not a regular file: ${resolvedArchive}`);
+    }
     if (path.basename(resolvedArchive).toLowerCase() !== 'app.asar' && !resolvedArchive.toLowerCase().endsWith('.asar')) {
-      throw new Error('Please select an .asar archive.');
+      throw new Error(`Please select an .asar archive: ${resolvedArchive}`);
     }
 
     this.emit(null, 'HASHING', { archivePath: resolvedArchive });
@@ -73,7 +97,7 @@ class ProjectManager {
       manifest,
       mocks,
       importedAt: new Date().toISOString(),
-      unpackedSiblingPresent: fs.existsSync(`${resolvedArchive}.unpacked`)
+      unpackedSiblingPresent: this.hasUnpackedSibling(resolvedArchive)
     };
 
     await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -110,7 +134,7 @@ class ProjectManager {
         manifest,
         mocks,
         importedAt: meta.importedAt,
-        unpackedSiblingPresent: fs.existsSync(`${ctx.archivePath}.unpacked`)
+        unpackedSiblingPresent: this.hasUnpackedSibling(ctx.archivePath)
       };
       this.projects.set(ctx.projectId, project);
       return this.publicProject(project);
