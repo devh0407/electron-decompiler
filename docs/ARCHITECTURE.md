@@ -7,6 +7,10 @@ Electron Decompiler treats imported ASAR content as untrusted. v0.3 still does *
 ```text
 app.asar
    |
+   +--> archive-fs (original-fs inside Electron)
+   |       |- stat/hash the archive as a real file
+   |       `- fingerprint app.asar.unpacked metadata
+   |
    v
 Worker Thread ---- extract ----> Workspace/source
                                  |
@@ -36,14 +40,29 @@ Host UI <---- IPC ---- Main ---- asar-preview://<projectId>/...
 
 ## Main modules
 
-- `project-manager.cjs`: workspace lifecycle, SHA-256 identity, cache/schema upgrade, extraction orchestration, mock persistence facade.
-- `asar-extractor-worker.cjs`: ASAR scan/extraction progress.
+- `archive-fs.cjs`: explicit filesystem boundary for the imported ASAR container. Uses Electron `original-fs` in Electron and regular `node:fs` in dependency-free Node tests.
+- `project-manager.cjs`: workspace lifecycle, SHA-256 identity, `.asar.unpacked` cache fingerprint, cache/schema upgrade, extraction orchestration, mock persistence facade.
+- `asar-extractor-worker.cjs`: ASAR scan/extraction progress. Archive reads are performed by `@electron/asar`; workspace output uses normal Node filesystem APIs.
 - `analyzer.cjs`: package/main/renderer/preload detection plus contextBridge API and IPC analysis.
 - `mock-registry.cjs`: validates and persists per-project `runtime/mocks.json`.
 - `runtime-shim.cjs`: builds the browser-side proxy/mock compatibility runtime from manifest + mocks.
 - `preview-manager.cjs`: isolated `WebContentsView`, navigation restrictions, renderer diagnostics, structured Runtime events.
 - `main.cjs`: project IPC and `asar-preview://` protocol; injects the runtime script before target page scripts.
 - `path-utils.cjs`: path normalization and traversal protection.
+
+## ASAR filesystem boundary
+
+Electron patches the ordinary Node `fs` APIs so a path ending in `.asar` behaves like a virtual directory. That behavior is useful when an Electron application reads files *inside* its own archive, but it is wrong when Electron Decompiler needs to validate or hash the imported archive container itself.
+
+For this reason all operations targeting the imported archive as a container go through `archive-fs.cjs`:
+
+- archive `stat`;
+- SHA-256 stream reads;
+- `app.asar.unpacked` companion inspection.
+
+The ASAR worker delegates archive parsing/extraction to `@electron/asar`, which has its own Electron-aware real-filesystem handling. Files that have already been extracted into `workspace/source` intentionally continue to use ordinary `node:fs`.
+
+The cache identity remains based on the ASAR SHA-256, while cache validity additionally records a metadata fingerprint for `app.asar.unpacked` (relative path, type, size, mtime, and symlink target). Adding, removing, or changing the companion therefore forces re-extraction instead of reusing stale workspace content.
 
 ## Analysis schema v2
 
@@ -108,5 +127,11 @@ The preview continues to use:
 - project-scoped custom protocol
 - blocked `window.open`
 - blocked top-level navigation outside the current imported project
+
+## Remaining extraction compatibility limits
+
+- ASAR link/symlink entries are currently reported and skipped rather than materialized. This avoids creating arbitrary filesystem links during safe extraction, but applications that depend on such entries can have missing resources.
+- The `.asar.unpacked` fingerprint hashes metadata rather than every companion file's bytes. This makes normal cache invalidation inexpensive but cannot detect the pathological case where content changes while path, size, and mtime are all preserved.
+- Import currently reads the installed archive in place. If another process replaces an application while hashing/extraction are in progress, a future snapshot-import mode would be a stronger consistency boundary.
 
 The next milestone, v0.4, can build a Virtual Main runtime on top of this manifest and mock registry instead of weakening the Safe Render boundary.
