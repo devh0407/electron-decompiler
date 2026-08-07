@@ -33,12 +33,47 @@ class ProjectManager {
     this.onProgress({ projectId, phase, ...payload });
   }
 
-  hasUnpackedSibling(archivePath) {
+  async inspectUnpackedSibling(archivePath) {
+    const root = `${archivePath}.unpacked`;
+    let rootStat;
     try {
-      return archiveFs.statSync(`${archivePath}.unpacked`).isDirectory();
-    } catch {
-      return false;
+      rootStat = await archiveFsp.stat(root);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { present: false, fingerprint: null };
+      throw new Error(`Unable to inspect ASAR unpacked companion: ${root} (${error?.code || error?.message || String(error)})`);
     }
+    if (!rootStat.isDirectory()) return { present: false, fingerprint: null };
+
+    const hash = crypto.createHash('sha256');
+    const queue = [{ absolute: root, relative: '' }];
+    while (queue.length) {
+      const current = queue.shift();
+      let entries;
+      try {
+        entries = await archiveFsp.readdir(current.absolute, { withFileTypes: true });
+      } catch (error) {
+        throw new Error(`Unable to read ASAR unpacked directory: ${current.absolute} (${error?.code || error?.message || String(error)})`);
+      }
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const relative = normalizeRelative(path.posix.join(current.relative, entry.name));
+        const absolute = path.join(current.absolute, entry.name);
+        if (entry.isDirectory()) {
+          hash.update(`D\0${relative}\n`);
+          queue.push({ absolute, relative });
+        } else if (entry.isFile()) {
+          const stat = await archiveFsp.stat(absolute);
+          hash.update(`F\0${relative}\0${stat.size}\0${Math.trunc(stat.mtimeMs)}\n`);
+        } else if (entry.isSymbolicLink()) {
+          let target = '';
+          try { target = await archiveFsp.readlink(absolute); } catch {}
+          hash.update(`L\0${relative}\0${target}\n`);
+        } else {
+          hash.update(`O\0${relative}\n`);
+        }
+      }
+    }
+    return { present: true, fingerprint: hash.digest('hex') };
   }
 
   async importAsar(archivePath) {
@@ -63,7 +98,10 @@ class ProjectManager {
     }
 
     this.emit(null, 'HASHING', { archivePath: resolvedArchive });
-    const hash = await this.hashFile(resolvedArchive);
+    const [hash, unpackedState] = await Promise.all([
+      this.hashFile(resolvedArchive),
+      this.inspectUnpackedSibling(resolvedArchive)
+    ]);
     const projectId = hash.slice(0, 16);
     const projectRoot = path.join(this.workspaceRoot, projectId);
     const sourceDir = path.join(projectRoot, 'source');
@@ -71,7 +109,16 @@ class ProjectManager {
     const metaPath = path.join(projectRoot, 'project.json');
     const manifestPath = path.join(analysisDir, 'manifest.json');
 
-    const cached = await this.loadCachedProject({ projectId, projectRoot, sourceDir, metaPath, manifestPath, archivePath: resolvedArchive, hash });
+    const cached = await this.loadCachedProject({
+      projectId,
+      projectRoot,
+      sourceDir,
+      metaPath,
+      manifestPath,
+      archivePath: resolvedArchive,
+      hash,
+      unpackedState
+    });
     if (cached) {
       this.emit(projectId, 'READY', { cached: true });
       return cached;
@@ -97,7 +144,8 @@ class ProjectManager {
       manifest,
       mocks,
       importedAt: new Date().toISOString(),
-      unpackedSiblingPresent: this.hasUnpackedSibling(resolvedArchive)
+      unpackedSiblingPresent: unpackedState.present,
+      unpackedFingerprint: unpackedState.fingerprint
     };
 
     await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -105,7 +153,9 @@ class ProjectManager {
       projectId,
       hash,
       archivePath: resolvedArchive,
-      importedAt: project.importedAt
+      importedAt: project.importedAt,
+      unpackedSiblingPresent: unpackedState.present,
+      unpackedFingerprint: unpackedState.fingerprint
     }, null, 2));
 
     this.projects.set(projectId, project);
@@ -118,6 +168,9 @@ class ProjectManager {
       if (!fs.existsSync(ctx.metaPath) || !fs.existsSync(ctx.manifestPath) || !fs.existsSync(ctx.sourceDir)) return null;
       const meta = JSON.parse(await fsp.readFile(ctx.metaPath, 'utf8'));
       if (meta.hash !== ctx.hash) return null;
+      if (Boolean(meta.unpackedSiblingPresent) !== ctx.unpackedState.present) return null;
+      if ((meta.unpackedFingerprint || null) !== ctx.unpackedState.fingerprint) return null;
+
       let manifest = JSON.parse(await fsp.readFile(ctx.manifestPath, 'utf8'));
       if (manifest.schemaVersion !== ANALYSIS_SCHEMA_VERSION) {
         this.emit(ctx.projectId, 'ANALYZING', { reason: 'schema-upgrade' });
@@ -134,7 +187,8 @@ class ProjectManager {
         manifest,
         mocks,
         importedAt: meta.importedAt,
-        unpackedSiblingPresent: this.hasUnpackedSibling(ctx.archivePath)
+        unpackedSiblingPresent: ctx.unpackedState.present,
+        unpackedFingerprint: ctx.unpackedState.fingerprint
       };
       this.projects.set(ctx.projectId, project);
       return this.publicProject(project);
