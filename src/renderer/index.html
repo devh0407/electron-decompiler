@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+  <title>Electron Decompiler</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>Electron Decompiler</strong>
+      <span class="version">v0.2</span>
+    </div>
+    <div class="toolbar">
+      <button id="open-button" class="primary">打开 app.asar</button>
+      <button id="reload-button" disabled>Reload Preview</button>
+      <button id="devtools-button" disabled>DevTools</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar">
+      <section id="drop-zone" class="drop-zone">
+        <div class="drop-title">拖入 app.asar</div>
+        <div class="drop-subtitle">或点击顶部“打开 app.asar”</div>
+      </section>
+
+      <section class="panel project-panel">
+        <div class="panel-title">Project</div>
+        <div id="project-summary" class="empty">尚未导入项目</div>
+      </section>
+
+      <section class="panel tree-panel">
+        <div class="panel-title">Files</div>
+        <div id="file-tree" class="file-tree empty">等待解包…</div>
+      </section>
+    </aside>
+
+    <section class="center">
+      <div class="preview-header">
+        <div>
+          <div class="panel-title">Preview</div>
+          <div id="preview-path" class="muted">未选择页面</div>
+        </div>
+        <div id="status-badge" class="badge">IDLE</div>
+      </div>
+
+      <div id="progress-card" class="progress-card hidden">
+        <div class="progress-row">
+          <span id="progress-label">准备中</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <div id="progress-detail" class="progress-detail"></div>
+      </div>
+
+      <div id="preview-host" class="preview-host">
+        <div id="preview-placeholder" class="preview-placeholder">
+          导入 ASAR 后将自动识别 Renderer 页面。<br />也可以从左侧文件树手动打开 HTML。
+        </div>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <section class="panel">
+        <div class="panel-title">Detected Renderer</div>
+        <div id="renderer-entries" class="empty">尚未分析</div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">Preload</div>
+        <div id="preload-list" class="empty">尚未分析</div>
+      </section>
+      <section class="panel warnings-panel">
+        <div class="panel-title">Warnings</div>
+        <div id="warning-list" class="empty">暂无</div>
+      </section>
+    </aside>
+  </main>
+
+  <section class="console-panel">
+    <div class="console-header">
+      <div class="panel-title">Console</div>
+      <button id="clear-console">Clear</button>
+    </div>
+    <div id="console-output" class="console-output"><div class="console-empty">Preview console output will appear here.</div></div>
+  </section>
+
+  <script src="./app.js"></script>
+</body>
+</html>
