@@ -35,6 +35,8 @@ A safe Electron `app.asar` inspector and renderer compatibility previewer.
 - Mock by exposed API path or IPC channel and reload the preview after saving.
 - Double-click a Missing API/IPC console line to add a mock stub to the editor.
 - Automatically re-analyze cached v0.2 workspaces when the analysis schema changes.
+- Read the imported ASAR container with Electron's unpatched `original-fs` semantics, so the archive is treated as a real file for validation and SHA-256 hashing.
+- Track the presence and metadata fingerprint of `app.asar.unpacked`; changing/restoring the companion directory invalidates stale extraction caches.
 
 ## Runtime mock format
 
@@ -67,6 +69,8 @@ nodeIntegration: false
 
 The original renderer JavaScript still executes inside that sandbox. The compatibility runtime is injected by the host protocol and only exposes proxy/mock objects derived from static analysis.
 
+The target archive itself is a special case: Electron patches normal `node:fs` calls so `.asar` paths behave like virtual directories. Electron Decompiler therefore uses a small `archive-fs` boundary that selects `original-fs` inside Electron for operations on the ASAR container and its `.unpacked` companion. Files already extracted into the workspace continue to use normal `node:fs`.
+
 ## Requirements
 
 - Node.js 22.12+
@@ -93,7 +97,10 @@ Analyzer and Runtime Shim tests are dependency-free and do not require an Electr
 ```text
 app.asar
    |
+   +--> archive-fs (real file semantics for stat/hash)
+   |
    +--> ASAR worker --> workspace/source
+   |        `--> @electron/asar reads app.asar.unpacked when required
    |
    +--> static analyzer
    |      |- package/main/renderer/preload
@@ -117,6 +124,8 @@ Workspace data is stored under Electron's `userData/workspaces/<sha256-prefix>` 
 - Bundled/minified preload code that constructs bridge objects dynamically may not be fully resolved.
 - Event-style APIs backed by `ipcRenderer.on` are identified, but v0.3 does not yet simulate event delivery.
 - Native modules are not executed in safe mode.
+- ASAR link/symlink entries are currently skipped during safe extraction and reported as `SYMLINK_SKIPPED`; an application that depends on such a link may have missing extracted resources.
+- The `.asar.unpacked` cache fingerprint uses path/size/mtime metadata rather than hashing every unpacked file's contents, trading perfect detection for import speed.
 - Remote `loadURL(http/https)` entries are detected but not auto-loaded.
 - Full main-process behavior is deferred to the Virtual Main runtime.
 
