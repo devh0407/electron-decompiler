@@ -1,8 +1,8 @@
-# Architecture (v0.3)
+# Architecture (v0.3.1)
 
 ## Runtime boundary
 
-Electron Decompiler treats imported ASAR content as untrusted. v0.3 still does **not** execute the target application's `main` or original `preload` scripts.
+Electron Decompiler treats imported ASAR content as untrusted. v0.3.1 still does **not** execute the target application's `main` or original `preload` scripts.
 
 ```text
 app.asar
