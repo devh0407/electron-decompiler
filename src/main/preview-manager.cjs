@@ -48,6 +48,17 @@ class PreviewManager {
     webContents.on('unresponsive', () => {
       this.onConsole({ source: 'preview', level: 'warn', message: 'Preview renderer became unresponsive.', timestamp: Date.now() });
     });
+    webContents.on('will-navigate', (details) => {
+      try {
+        const target = new URL(details.url);
+        if (target.protocol !== 'asar-preview:' || target.hostname !== this.projectId) {
+          details.preventDefault();
+          this.onConsole({ source: 'preview', level: 'warn', message: `Blocked navigation: ${details.url}`, timestamp: Date.now() });
+        }
+      } catch {
+        details.preventDefault();
+      }
+    });
     webContents.setWindowOpenHandler(({ url }) => {
       this.onConsole({ source: 'preview', level: 'warn', message: `Blocked window.open: ${url}`, timestamp: Date.now() });
       return { action: 'deny' };
@@ -69,7 +80,7 @@ class PreviewManager {
     const view = this.ensureView();
     this.projectId = projectId;
     const encodedPath = relativePath.split('/').map(encodeURIComponent).join('/');
-    const url = `asar-preview://project/${encodeURIComponent(projectId)}/${encodedPath}`;
+    const url = `asar-preview://${encodeURIComponent(projectId)}/${encodedPath}`;
     view.setVisible(true);
     await view.webContents.loadURL(url);
     return { url };
