@@ -2,6 +2,8 @@ const { app, BrowserWindow, dialog, ipcMain, net, protocol } = require('electron
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { contentTypeFor, readArchiveFile } = require('./archive-reader.cjs');
+const { archiveEntryPathIssue, windowsPathIssue } = require('./extraction-plan.cjs');
 const { ProjectManager } = require('./project-manager.cjs');
 const { PreviewManager } = require('./preview-manager.cjs');
 const { buildRuntimeShim } = require('./runtime-shim.cjs');
@@ -34,6 +36,30 @@ function injectRuntimeScript(html) {
   const head = /<head(?:\s[^>]*)?>/i;
   if (head.test(html)) return html.replace(head, (match) => `${match}\n  ${tag}`);
   return `${tag}\n${html}`;
+}
+
+async function findPhysicalProjectFile(project, relativePath) {
+  if (archiveEntryPathIssue(relativePath)) return null;
+  if (process.platform === 'win32' && windowsPathIssue(relativePath)) return null;
+
+  const filePath = resolveInside(project.sourceDir, relativePath);
+  try {
+    const stat = await fsp.stat(filePath);
+    return stat.isFile() ? filePath : null;
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
+async function readProjectBytes(project, relativePath) {
+  const physical = await findPhysicalProjectFile(project, relativePath);
+  if (physical) return { source: 'workspace', physical, bytes: null };
+
+  const issue = archiveEntryPathIssue(relativePath);
+  if (issue) throw new Error(`Unsafe preview path: ${relativePath} (${issue})`);
+  const bytes = await readArchiveFile(project.archivePath, relativePath);
+  return { source: 'archive', physical: null, bytes };
 }
 
 function createMainWindow() {
@@ -80,18 +106,40 @@ function registerProtocol() {
       }
 
       const relativePath = parts.join('/');
-      const filePath = resolveInside(project.sourceDir, relativePath);
+      if (!relativePath || archiveEntryPathIssue(relativePath)) {
+        return new Response('Unsafe or empty project path', { status: 400 });
+      }
+
+      let resolved;
+      try {
+        resolved = await readProjectBytes(project, relativePath);
+      } catch (error) {
+        return new Response(error?.message || 'Project file not found', { status: 404 });
+      }
+
       if (/\.html?$/i.test(relativePath)) {
-        const html = await fsp.readFile(filePath, 'utf8');
+        const bytes = resolved.physical ? await fsp.readFile(resolved.physical) : resolved.bytes;
+        const html = Buffer.from(bytes).toString('utf8');
         return new Response(injectRuntimeScript(html), {
           status: 200,
           headers: {
             'content-type': 'text/html; charset=utf-8',
-            'cache-control': 'no-store'
+            'cache-control': 'no-store',
+            'x-electron-decompiler-source': resolved.source
           }
         });
       }
-      return net.fetch(pathToFileURL(filePath).toString());
+
+      if (resolved.physical) return net.fetch(pathToFileURL(resolved.physical).toString());
+
+      return new Response(resolved.bytes, {
+        status: 200,
+        headers: {
+          'content-type': contentTypeFor(relativePath),
+          'cache-control': 'no-store',
+          'x-electron-decompiler-source': 'archive'
+        }
+      });
     } catch (error) {
       return new Response(error?.message || 'Preview protocol error', { status: 500 });
     }
@@ -138,4 +186,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-module.exports = { injectRuntimeScript };
+module.exports = { injectRuntimeScript, findPhysicalProjectFile };
